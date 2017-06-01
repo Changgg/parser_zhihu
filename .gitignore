@@ -1,1 +1,4 @@
 .idea/
+.python-version
+files/
+__pycache__/

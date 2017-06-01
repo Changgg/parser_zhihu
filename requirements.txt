@@ -1,0 +1,6 @@
+requests
+pycookiecheat
+faker
+beautifulsoup4
+pillow
+lxml
