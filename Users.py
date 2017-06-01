@@ -1,4 +1,3 @@
-# encoding=utf8
 import time, requests, re, pickle, os, queue, urllib, threading, ThreadUtil
 import io
 from PIL import Image
@@ -8,6 +7,7 @@ import json
 
 import pycookiecheat
 import faker
+import glob
 
 
 class User(object):
@@ -31,9 +31,16 @@ class User(object):
         _xsrf = soup.select_one('input[name=_xsrf]')
         self._xsrf = _xsrf['value'] if _xsrf else None
         if _xsrf:
+            self._cookies_save()
             self.name, self.id, self.img_avatar, self.hash, self.desc, *spam = json.loads(
                 soup.select_one('script[data-name=current_user]').text)
             self.time_created = json.loads(soup.select_one('script[data-name=ga_vars]').text)['user_created']
+
+    def _cookies_save(self):
+        path = f"{Utils.PATH_FILES}/{self._xsrf}.cookies"
+        content = json.dumps(requests.utils.dict_from_cookiejar(self.session.cookies))
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
 
     def refresh_user_answers(self):
         resp = self.session.get(f"https://www.zhihu.com/people/{self.id}/answers")
@@ -184,6 +191,14 @@ class Users(object):
                     print('没有从浏览器里读到有用数据')
             except:
                 print('解析数据出错')
+
+        # 从files目录下读取cookies
+        for c in glob.iglob(f'{Utils.PATH_FILES}/[0-9a-z]*.cookies'):
+            with open(c, encoding='utf-8') as f:
+                c = json.load(f)
+            u = User(cookies=c)
+            if u._xsrf:
+                self.Users.append(u)
 
     def login(self, username, password):
         """通过账号密码的方式加入新的 user实例 以管理
