@@ -14,6 +14,8 @@ BROWSER_HEADERS_DEFAULT = requests.structures.CaseInsensitiveDict(
 )
 
 PATH_FILES = os.path.join(os.path.dirname(__file__), 'files')
+if not os.path.exists(PATH_FILES):
+    os.mkdir(PATH_FILES)
 
 URL_BASE = 'https://www.zhihu.com'
 URL_ZHUANLAN = 'https://zhuanlan.zhihu.com'
