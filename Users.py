@@ -18,13 +18,13 @@ class User(object):
         session = self.session = requests.session()
         session.headers = Utils.BROWSER_HEADERS_DEFAULT
         session.headers[
-            'User-Agent'] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36"
+            'User-Agent'] = Utils.BROWSER_HEADERS_USER_AGENTS_DEFAULT
         session.cookies = requests.utils.add_dict_to_cookiejar(
             session.cookies,
             cookies
         )
 
-        # 从首页获得用户信息
+        # 从首页获得用户登陆状态和信息
         resp = session.get(Utils.URL_BASE)
         soup = BeautifulSoup(resp.text, 'lxml')
 
@@ -32,9 +32,82 @@ class User(object):
         self._xsrf = _xsrf['value'] if _xsrf else None
         if _xsrf:
             self._cookies_save()
+
             self.name, self.id, self.img_avatar, self.hash, self.desc, *spam = json.loads(
                 soup.select_one('script[data-name=current_user]').text)
             self.time_created = json.loads(soup.select_one('script[data-name=ga_vars]').text)['user_created']
+
+            """从用户界面获得更多信息"""
+            resp = self.session.get(f"{Utils.URL_PREFIX_PEOPLE}{self.id}/activities")
+            soup = BeautifulSoup(resp.text, 'lxml')
+
+            company = soup.find('svg', class_='Icon Icon--company')
+            if company:
+                company = company.parent.parent.text
+            else:
+                company = ''
+            self.company = company
+
+            education = soup.find('svg', class_='Icon Icon--education')
+            if education:
+                education = education.parent.parent.text
+            else:
+                education = ''
+            self.education = education
+
+            # 侧边栏
+            side = soup.select_one('div.Profile-sideColumn')
+            card = side.select_one('div.Card')
+            info = {}
+            for match in re.finditer(r"([ 0-9]+)次([^获得,，参与]+)", card.text):
+                info[match.group(2)] = int(match.group(1))
+
+            self.count_approve = info['赞同']
+            self.count_help = info['感谢']
+            self.count_collect = info['收藏']
+            self.count_public_edit = info['公共编辑']
+
+            card = side.select_one('div.Card.FollowshipCard')
+            self.count_following = int(card.select_one('a[href$=following] > div.NumberBoard-value').text)
+            self.count_followers = int(card.select_one('a[href$=followers] > div.NumberBoard-value').text)
+
+            info = {}
+            for a in side.select('div.Profile-lightList > .Profile-lightItem'):
+                info[a.select_one('.Profile-lightItemName').text.strip()] = \
+                    int(a.select_one('.Profile-lightItemValue').text.strip())
+            self.count_sponsor_live = info['赞助的 Live ⚡️']
+            self.count_following_collections = info['关注的收藏夹']
+            self.count_following_topics = info['关注的话题']
+            self.count_following_questions = info['关注的问题']
+            self.count_following_columns = info['关注的专栏']
+
+            card = side.select_one('.Profile-footerOperations')
+            self.view = int(re.match(r"个人主页被浏览([ 0-9]+)次", card.text).group(1))
+
+    def __repr__(self):
+        return f"""-----------------------------
+欢迎 {self.name} 使用
+-----------------------------
+{self.desc}
+-----------------------------
+用户公司 {self.company}
+-----------------------------
+获得 {self.count_approve} 次赞同
+获得 {self.count_help} 次感谢，{self.count_collect} 次收藏
+参与 {self.count_public_edit} 次公共编辑
+-----------------------------
+专注了 {self.count_following} 个大神
+拥有 {self.count_followers} 个小弟
+-----------------------------
+赞助了 {self.count_sponsor_live} 个live
+
+关注的话题\t\t{self.count_following_topics}
+关注的专栏\t\t{self.count_following_columns}
+关注的问题\t\t{self.count_following_questions}
+关注的收藏夹\t\t{self.count_following_collections}
+-----------------------------
+个人主页被浏览 {self.view} 次
+-----------------------------"""
 
     def _cookies_save(self):
         path = f"{Utils.PATH_FILES}/{self._xsrf}.cookies"
@@ -42,80 +115,9 @@ class User(object):
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
 
-    def refresh_user_answers(self):
-        resp = self.session.get(f"https://www.zhihu.com/people/{self.id}/answers")
-        soup = BeautifulSoup(resp.text, 'lxml')
-        self.answers = []
-
-        for i in soup.select("#Profile-answers > div > div.List-item"):
-            item = {}
-            a = i.select_one('.ContentItem-title a')
-            item['link'], item['title'] = a['href'], a.text
-            # <meta itemprop="upvoteCount" content="1">
-            item['upvote'] = i.select_one('meta[itemprop=upvoteCount]')['content']
-            self.answers.append(item)
-
-            r = self.session.get(url=f'{Utils.URL_PERSOINFO_API}{self.id}/answers')
-            if r.status_code == 200:
-
-                b = BeautifulSoup(r.content, 'lxml')
-
-                user_name = b.find('span', {'class': 'ProfileHeader-name'})
-                user_name = user_name.text if user_name else None
-
-                user_headline = b.find('span', class_='RichText ProfileHeader-headline')
-                user_headline = user_headline.text if user_headline else None
-
-                user_company = b.find('svg', class_='Icon Icon--company')
-                if user_company:
-                    user_company = user_company.parent.parent.text
-                else:
-                    user_company = None
-
-                user_education = b.find('svg', class_='Icon Icon--education')
-                if user_education:
-                    user_education = user_education.parent.parent.text
-                else:
-                    user_education = None
-
-                user_follow = b.find_all('div', {'class': 'NumberBoard-value'})
-                user_follower, user_followee = -1, -1
-                if len(user_follow) == 2:
-                    user_follower, user_followee = user_follow[0].text, user_follow[1].text
-
-                user_otherinfo = b.find_all('span', {'class': 'Profile-lightItemValue'})
-                takein_live, followe_topic, followe_zhuanlan, followe_question, followe_collection = 0, 0, 0, 0, 0
-                if len(user_otherinfo) == 5:
-                    takein_live = user_otherinfo[0].text
-                    followe_topic = user_otherinfo[1].text
-                    followe_zhuanlan = user_otherinfo[2].text
-                    followe_question = user_otherinfo[3].text
-                    followe_collection = user_otherinfo[4].text
-
-                user_activity = b.find_all('span', {'class': 'Tabs-meta'})
-                answer_num, share_num, question_num, collection_num = 0, 0, 0, 0
-                if len(user_activity) == 4:
-                    answer_num = user_activity[0].text
-                    share_num = user_activity[1].text
-                    question_num = user_activity[2].text
-                    collection_num = user_activity[3].text
-
-                re_votenumber = r'(?<=获得 )[0-9]{1,}(?= 次赞同)'
-                re_thanknumber = r'(?<=获得 )[0-9]{1,}(?= 次感谢)'
-                re_collectnumber = r'(?<=，)[0-9]{1,}(?= 次收藏)'
-                re_includenumber = r'(?<=收录 )[0-9]{1,}(?= 个回答)'
-
-                c = r.text
-                f = lambda x: x.group() if x else 0
-                votenumber = f(re.search(re_votenumber, c))
-                thanknumber = f(re.search(re_thanknumber, c))
-                collectnumber = f(re.search(re_collectnumber, c))
-                includenumber = f(re.search(re_includenumber, c))
-
-                print(user_name, user_headline, user_company, user_education, user_follower, user_followee,
-                      takein_live, followe_topic, followe_zhuanlan, followe_question, followe_collection,
-                      answer_num, share_num, question_num, collection_num, votenumber, thanknumber, collectnumber,
-                      includenumber)
+    def answers(self):
+        # TODO 获取用户答案
+        pass
 
     def archieve_list(self, userid, ftype='followers', thread_number=10):
         self.url_queue = queue.Queue()
@@ -179,14 +181,14 @@ class User(object):
 
 
 class Users(object):
-    Users = []
+    users = []
 
     def __init__(self, from_browser=True):
         if from_browser:
             try:
                 u = User(cookies=pycookiecheat.chrome_cookies(Utils.URL_BASE))
                 if u._xsrf:
-                    self.Users.append(u)
+                    self.users.append(u)
                 else:
                     print('没有从浏览器里读到有用数据')
             except:
@@ -198,7 +200,7 @@ class Users(object):
                 c = json.load(f)
             u = User(cookies=c)
             if u._xsrf:
-                self.Users.append(u)
+                self.users.append(u)
 
     def login(self, username, password):
         """通过账号密码的方式加入新的 user实例 以管理
@@ -218,7 +220,7 @@ class Users(object):
         print(j['msg'])
         if not j['r']:
             u = User(cookies=requests.utils.dict_from_cookiejar(session.cookies))
-            self.Users.append(u)
+            self.users.append(u)
             return True
         else:
             pass
